@@ -21,7 +21,6 @@ pub struct Args {
     #[clap(long)]
     pub compute_h2: Option<String>,
 
-    
     #[clap(long)]
     pub ld: Option<String>,
 
@@ -37,7 +36,6 @@ pub struct Args {
     #[clap(long)]
     pub modify: Option<String>,
 
-
     #[clap(long)]
     pub min_maf: Option<f64>,
 
@@ -48,7 +46,7 @@ pub struct Args {
     #[clap(long)]
     pub output: Option<String>,
 
-    ///the gwas summary statistics file to clump 
+    ///the gwas summary statistics file to clump
     #[clap(long)]
     pub snp_clump: Option<String>,
 
@@ -60,8 +58,17 @@ pub struct Args {
     pub max_r2: Option<f64>,
 
     #[clap(long)]
-    pub filter_snps_by:Option<String>,
+    pub filter_snps_by: Option<String>,
 
+    #[clap(long)]
+    pub mr_ivm: bool,
 
+    #[clap(long)]
+    pub mr_egger: bool,
 
+    #[clap(long)]
+    pub exposure: Option<String>,
+
+    #[clap(long)]
+    pub outcome: Option<String>,
 }

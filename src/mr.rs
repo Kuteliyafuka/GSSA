@@ -1,7 +1,8 @@
-use crate::gwas_sum::SnpInfo;
+use crate::gwas_sum::{GwasSummary, SnpInfo};
+use ndarray::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 
 pub fn snp_clump(snps: Vec<SnpInfo>, max_r2: f64, ld_path: String) -> Vec<SnpInfo> {
     // 1. 先按染色体分组
@@ -72,10 +73,14 @@ fn read_ld_file(path: &str) -> Option<HashMap<(String, String), f64>> {
 
     for (i, line) in reader.lines().enumerate() {
         let line = line.ok()?;
-        if i == 0 { continue; } // 跳过表头
+        if i == 0 {
+            continue;
+        } // 跳过表头
 
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 7 { continue; }
+        if cols.len() < 7 {
+            continue;
+        }
 
         let snp_a = cols[2].to_string();
         let snp_b = cols[5].to_string();
@@ -102,7 +107,7 @@ pub fn filter_by_snp_file(snps: Vec<SnpInfo>, tsv_path: &str) -> Vec<SnpInfo> {
         if i == 0 {
             // 自动定位 "SNP" 列
             for (idx, col_name) in cols.iter().enumerate() {
-                println!("{}",col_name);
+                println!("{}", col_name);
                 if col_name.eq_ignore_ascii_case("snp") {
                     snp_col_index = Some(idx);
                     break;
@@ -126,4 +131,217 @@ pub fn filter_by_snp_file(snps: Vec<SnpInfo>, tsv_path: &str) -> Vec<SnpInfo> {
     snps.into_iter()
         .filter(|s| snp_set.contains(s.snp.as_str()))
         .collect()
+}
+
+pub fn weighted_linear_regression(
+    x: &Array1<f64>,
+    y: &Array1<f64>,
+    w: &Array1<f64>,
+) -> (f64, f64, f64, f64) {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(x.len(), w.len());
+
+    let w_sum = w.sum();
+
+    // 加权均值
+    let x_mean = (x * w).sum() / w_sum;
+    let y_mean = (y * w).sum() / w_sum;
+
+    // 加权协方差和方差
+    let cov_xy = ((x - x_mean) * (y - y_mean) * w).sum();
+    let var_x = ((x - x_mean).mapv(|v| v * v) * w).sum();
+
+    // 斜率和截距
+    let slope = cov_xy / var_x;
+    let intercept = y_mean - slope * x_mean;
+
+    // 残差
+    let residuals = y - &(intercept + slope * x);
+
+    // 加权残差平方和
+    let rss = (&residuals * &residuals * w).sum();
+    let df = x.len() as f64 - 2.0;
+    let sigma2 = rss / df;
+
+    // 标准误差
+    let se_slope = (sigma2 / var_x).sqrt();
+    let se_intercept = (sigma2 * (1.0 / w_sum + x_mean.powi(2) / var_x)).sqrt();
+
+    (intercept, slope, se_intercept, se_slope)
+}
+
+pub fn linear_regression(x: &Array1<f64>, y: &Array1<f64>) -> (f64, f64, f64, f64) {
+    assert_eq!(x.len(), y.len());
+    let w = &Array1::from_elem(x.len(), 1.0);
+
+    let w_sum = w.sum();
+
+    // 加权均值
+    let x_mean = (x * w).sum() / w_sum;
+    let y_mean = (y * w).sum() / w_sum;
+
+    // 加权协方差和方差
+    let cov_xy = ((x - x_mean) * (y - y_mean) * w).sum();
+    let var_x = ((x - x_mean).mapv(|v| v * v) * w).sum();
+
+    // 斜率和截距
+    let slope = cov_xy / var_x;
+    let intercept = y_mean - slope * x_mean;
+
+    // 残差
+    let residuals = y - &(intercept + slope * x);
+
+    // 加权残差平方和
+    let rss = (&residuals * &residuals * w).sum();
+    let df = x.len() as f64 - 2.0;
+    let sigma2 = rss / df;
+
+    // 标准误差
+    let se_slope = (sigma2 / var_x).sqrt();
+    let se_intercept = (sigma2 * (1.0 / w_sum + x_mean.powi(2) / var_x)).sqrt();
+
+    (intercept, slope, se_intercept, se_slope)
+}
+
+pub fn mr_ivm(exposure: GwasSummary, outcome: GwasSummary) -> io::Result<()> {
+    // 载入 SNP 列表
+    let snps_exp = exposure.load_snps()?;
+    let snps_out = outcome.load_snps()?; // ← 注意这里改成 outcome
+
+    // 将 exposure SNPs 转为 HashMap，方便按 SNP 名快速匹配
+    let exp_map: HashMap<String, &SnpInfo> = snps_exp
+        .iter()
+        .filter(|s| s.beta.is_some() && s.se.is_some())
+        .map(|s| (s.snp.clone(), s))
+        .collect();
+
+    // 存储匹配后的数据
+    let mut beta_exp_vec = Vec::new();
+    let mut beta_out_vec = Vec::new();
+    let mut weight_vec = Vec::new();
+
+    for s_out in snps_out.iter() {
+        if let (Some(beta_out), Some(se_out)) = (s_out.beta, s_out.se) {
+            if let Some(s_exp) = exp_map.get(&s_out.snp) {
+                if let (Some(beta_exp), Some(se_exp)) = (s_exp.beta, s_exp.se) {
+                    beta_exp_vec.push(beta_exp);
+                    beta_out_vec.push(beta_out);
+                    // 权重为 outcome 的 1 / SE^2
+                    weight_vec.push(1.0 / (se_out * se_out));
+                }
+            }
+        }
+    }
+
+    if beta_exp_vec.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::Other, "没有匹配的 SNP"));
+    }
+
+    // 转换为 ndarray
+    let x = Array1::from(beta_exp_vec);
+    let y = Array1::from(beta_out_vec);
+    let w = Array1::from(weight_vec);
+
+    // 调用加权线性回归
+    let (intercept, slope, se_intercept, se_slope) =
+        weighted_linear_regression_zero_intercept(&x, &y, &w);
+
+    println!("================ IVM MR 结果 ================");
+    println!("IVW 估计值(Slope)    = {:.6}", slope);
+    println!("标准误(SE_slope)      = {:.6}", se_slope);
+    println!("截距(Intercept)       = {:.6}", intercept);
+    println!("截距标准误(SE_intercept) = {:.6}", se_intercept);
+    println!("============================================");
+
+    Ok(())
+}
+pub fn mr_egger(exposure: GwasSummary, outcome: GwasSummary) -> io::Result<()> {
+    // 载入 SNP 列表
+    let snps_exp = exposure.load_snps()?;
+    let snps_out = outcome.load_snps()?; // ← 注意这里改成 outcome
+
+    // 将 exposure SNPs 转为 HashMap，方便按 SNP 名快速匹配
+    let exp_map: HashMap<String, &SnpInfo> = snps_exp
+        .iter()
+        .filter(|s| s.beta.is_some() && s.se.is_some())
+        .map(|s| (s.snp.clone(), s))
+        .collect();
+
+    // 存储匹配后的数据
+    let mut beta_exp_vec = Vec::new();
+    let mut beta_out_vec = Vec::new();
+    let mut weight_vec = Vec::new();
+
+    for s_out in snps_out.iter() {
+        if let (Some(beta_out), Some(se_out)) = (s_out.beta, s_out.se) {
+            if let Some(s_exp) = exp_map.get(&s_out.snp) {
+                if let (Some(beta_exp), Some(se_exp)) = (s_exp.beta, s_exp.se) {
+                    beta_exp_vec.push(beta_exp);
+                    beta_out_vec.push(beta_out);
+                    // 权重为 outcome 的 1 / SE^2
+                    weight_vec.push(1.0 / (se_out * se_out));
+                }
+            }
+        }
+    }
+
+    if beta_exp_vec.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::Other, "没有匹配的 SNP"));
+    }
+
+    // 转换为 ndarray
+    let x = Array1::from(beta_exp_vec);
+    let y = Array1::from(beta_out_vec);
+    let w = Array1::from(weight_vec);
+
+    // 调用加权线性回归
+    let (intercept, slope, se_intercept, se_slope) = weighted_linear_regression(&x, &y, &w);
+
+    println!("================ EGGER MR 结果 ================");
+    println!("IVW 估计值(Slope)    = {:.6}", slope);
+    println!("标准误(SE_slope)      = {:.6}", se_slope);
+    println!("截距(Intercept)       = {:.6}", intercept);
+    println!("截距标准误(SE_intercept) = {:.6}", se_intercept);
+    println!("============================================");
+
+    Ok(())
+}
+pub fn weighted_linear_regression_zero_intercept(
+    x: &Array1<f64>,
+    y: &Array1<f64>,
+    w: &Array1<f64>,
+) -> (f64, f64, f64, f64) {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(x.len(), w.len());
+    assert!(x.len() > 1, "Need at least 2 data points");
+
+    let n = x.len() as f64;
+
+    // 计算加权统计量
+    let cov_xy = (x * y * w).sum();
+    let var_x = (x * x * w).sum();
+
+    assert!(var_x > 0.0, "Variance of x must be positive");
+
+    let slope = cov_xy / var_x;
+
+    // 残差
+    let residuals = y - &(x * slope);
+
+    // 加权残差平方和
+    let rss = (&residuals * &residuals * w).sum();
+
+    // 方法1：使用样本量-1作为自由度（更保守）
+    let df = n - 1.0;
+    let mse = rss / df;
+
+    // 方法2：使用有效样本量-1（当权重差异很大时更合适）
+    // let effective_n = w.sum();
+    // let df = effective_n - 1.0;
+    // let mse = rss / df;
+
+    // 斜率的标准误
+    let se_slope = (mse / var_x).sqrt();
+
+    (0.0, slope, 0.0, se_slope)
 }
