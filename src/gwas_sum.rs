@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap,HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 
@@ -37,29 +37,21 @@ pub struct LdFile {
 pub struct SnpInfo {
     /// SNP名称（如 rs123456）
     pub snp: String,
-
     /// 所在染色体编号
     pub chr: String,
-
     /// 在染色体上的位置（bp）
     pub pos: u32,
-
     /// 等位基因（如 "A" / "G"）
     pub a1: String,
     pub a2: String,
-
     /// 频率（如次要等位基因频率）
     pub maf: Option<f64>,
-
     /// 效应值（beta 或 OR）
     pub beta: Option<f64>,
-
     /// 标准误
     pub se: Option<f64>,
-
     /// P 值
     pub p: Option<f64>,
-
     /// effective sample size
     pub neff: Option<f64>,
 }
@@ -227,16 +219,32 @@ impl GwasSummary {
             result
             
         }
-    /// 得到snp name
-    #[warn(dead_code)]
-    pub fn extract_snp_names(snps: &[SnpInfo]) -> Vec<(String,String,String)> {
-        snps.iter().map(|s| (s.snp.clone(),s.a1.clone(),s.a2.clone())).collect()
-    }
+
+
     /// 过滤 SNP 名称列表
-    pub fn merge_alleles(snps: Vec<SnpInfo>, snp_list: Vec<(String,String,String)>) -> Vec<SnpInfo> {
-        snps.into_iter()
-            .filter(|s| snp_list.contains(&(s.snp.clone(),s.a1.clone(),s.a2.clone())))
-            .collect()
+    pub fn merge_alleles<'a>(snps: Vec<SnpInfo>, snp_list: Vec<(&'a str, &'a str, &'a str)>) -> Vec<SnpInfo> {
+        let set: HashSet<(&str, &str, &str)> = snp_list.into_iter().collect();
+        let mut result1:Vec<SnpInfo> = snps.clone().into_iter()
+            .filter(|s| {
+                let key = (s.snp.as_str(), s.a2.as_str(), s.a1.as_str());
+                set.contains(&key)
+            })
+            .map(|mut s| {
+                if let Some(maf) = s.maf {
+                    s.maf = Some(1.0 - maf);
+                }
+                s
+            })
+            .collect();
+        let result2:Vec<SnpInfo> = snps.into_iter()
+            .filter(|s| {
+                let key = (s.snp.as_str(), s.a1.as_str(), s.a2.as_str());
+                set.contains(&key)
+            })
+            .collect(); 
+        result1.extend(result2) ;     
+        println!("merge alleles, remaining snps {}",result1.len());
+        result1
     }
 
     pub fn compute_h2(&self, ld: LdFile) -> io::Result<f64> {
@@ -273,7 +281,7 @@ impl GwasSummary {
             };
 
             x_vec.push(l2);
-            y_vec.push(z * z - 1.0);
+            y_vec.push(z * z-1.0);
             neff_vec.push(neff);
         }
         let m = x_vec.len() as f64; // SNP 总数
@@ -290,12 +298,11 @@ impl GwasSummary {
             .sum();
 
         let denominator: f64 = x_vec.iter().map(|x| (x - x_mean).powi(2)).sum();
-
         let slope = numerator / denominator;
 
         // h^2 = slope * M / N
         let h2 = slope * m / mean_neff;
-
+        println!("slope {},snp number {},mean effective sample number {}",slope,m,mean_neff);
         Ok(h2)
     }
     /// 将 SNP 列表写入任意 Writer
@@ -366,8 +373,8 @@ impl RefAlleles {
         }
         Ok(snps)
     }
-    pub fn extract_snp_names(snps: &[AllelesInfo]) -> Vec<(String,String,String)> {
-        snps.iter().map(|s| (s.snp.clone(),s.a1.clone(),s.a2.clone())).collect()
+    pub fn extract_snp_names(snps: &[AllelesInfo]) -> Vec<(&str, &str, &str)> {
+        snps.iter().map(|s| (s.snp.as_str(), s.a2.as_str(), s.a1.as_str())).collect()
     }
 }
 
@@ -390,4 +397,118 @@ impl AllelesInfo {
         })
     }
     
+}
+
+
+/// compute the genetic correlation
+pub fn compute_genetic_correlation(file_path1: GwasSummary, file_path2: GwasSummary,ld_path:LdFile) -> io::Result<f64> {
+    // 计算两个性状的 SNP 遗传力
+    let h1_2 = file_path1.compute_h2(ld_path.clone())?;
+    let h2_2 = file_path2.compute_h2(ld_path.clone())?;
+    let ld_map = ld_path.load_ld_scores()?;
+    let h1_h2 = (h1_2 * h2_2).sqrt();
+    let mut map1_nol:HashMap<String,(f64,f64)> = HashMap::new();
+    let mut map2_nol:HashMap<String,(f64,f64)> = HashMap::new();
+
+    let snps1 = file_path1.load_snps()?;
+    let snps2 = file_path2.load_snps()?;
+    for snp in snps1.iter() {
+        // 取 beta
+        let beta = match snp.beta {
+            Some(b) => b,
+            None => continue, // 没有 beta 的 SNP 跳过
+        };
+        let se = match snp.se {
+            Some(b) => b,
+            None => continue, // 没有 beta 的 SNP 跳过
+        };
+        let neff = match snp.neff {
+            Some(b) => b,
+            None => continue,
+        };
+        let z = beta / se;
+
+
+        map1_nol.insert(snp.snp.clone(), (z,neff));
+    }
+
+    for snp in snps2.iter() {
+        // 取 beta
+        let beta = match snp.beta {
+            Some(b) => b,
+            None => continue, // 没有 beta 的 SNP 跳过
+        };
+        let se = match snp.se {
+            Some(b) => b,
+            None => continue, // 没有 beta 的 SNP 跳过
+        };
+        let neff = match snp.neff {
+            Some(b) => b,
+            None => continue,
+        };
+        let z = beta / se;
+
+
+        map2_nol.insert(snp.snp.clone(), (z,neff));
+    }
+
+    let map1:HashMap<String,(f64,f64,f64)> =map1_nol.into_iter()
+    .flat_map(|(id, (z, neff))| {
+        ld_map.get(&id).map(|&l2| (id, (z, l2, neff)))
+    })
+    .collect();
+    let map2:HashMap<String,(f64,f64,f64)> =map2_nol.into_iter()
+    .flat_map(|(id, (z, neff))| {
+        ld_map.get(&id).map(|&l2| (id, (z, l2, neff)))
+    })
+    .collect();
+
+    let keys1: HashSet<_> = map1.keys().cloned().collect();
+    let keys2: HashSet<_> = map2.keys().cloned().collect();
+    let inter_keys: HashSet<_> = keys1.intersection(&keys2).cloned().collect();
+    let map1_filtered:HashMap<String,(f64,f64,f64)> = map1.into_iter().filter(|(k,_)| inter_keys.contains(k)).collect();
+    let map2_filtered:HashMap<String,(f64,f64,f64)> = map2.into_iter().filter(|(k,_)| inter_keys.contains(k)).collect();
+
+    let n1_vec:Vec<f64> = map1_filtered.values().map(|(_,_,neff)| *neff).collect();
+    let n2_vec:Vec<f64> = map2_filtered.values().map(|(_,_,neff)| *neff).collect();
+    let m = n1_vec.len() as f64;
+    let n1 = n1_vec.iter().sum::<f64>() / m;
+    let n2 = n2_vec.iter().sum::<f64>() / m;
+
+        // 构建 Z1Z2 和 L2 向量
+    let mut z1z2_vec: Vec<f64> = Vec::new();
+    let mut l2_vec: Vec<f64> = Vec::new();
+
+    for key in &inter_keys {
+        let (z1, l2_1, _) = map1_filtered.get(key).unwrap();
+        let (z2, l2_2, _) = map2_filtered.get(key).unwrap();
+        z1z2_vec.push(z1 * z2);
+        // 两个文件的 L2 理论上应该一样，这里取平均更稳妥
+        l2_vec.push((l2_1 + l2_2) / 2.0);
+    }
+
+    // 最小二乘法线性回归 slope
+    let x_mean = l2_vec.iter().sum::<f64>() / m;
+    let y_mean = z1z2_vec.iter().sum::<f64>() / m;
+
+    let numerator: f64 = l2_vec
+        .iter()
+        .zip(z1z2_vec.iter())
+        .map(|(x, y)| (x - x_mean) * (y - y_mean))
+        .sum();
+
+    let denominator: f64 = l2_vec.iter().map(|x| (x - x_mean).powi(2)).sum();
+
+    let slope = numerator / denominator;
+
+    // 根据理论公式计算 genetic correlation
+    let genetic_correlation = slope * m / ((n1 * n2).sqrt() * h1_h2);
+
+    println!(
+        "M = {:.0}, N1 = {:.0}, N2 = {:.0}, h1² = {:.4}, h2² = {:.4}, slope = {:.6}, r_g = {:.6}",
+        m, n1, n2, h1_2, h2_2, slope, genetic_correlation
+    );
+
+    Ok(genetic_correlation)
+
 }

@@ -48,6 +48,20 @@ pub struct Args {
     #[clap(long)]
     pub output: Option<String>,
 
+    ///the gwas summary statistics file to clump 
+    #[clap(long)]
+    pub snp_clump: Option<String>,
+
+    ///ld r2 files path
+    #[clap(long)]
+    pub ld_dir: Option<String>,
+
+    #[clap(long)]
+    pub max_r2: Option<f64>,
+
+    #[clap(long)]
+    pub filter_snps_by:Option<String>,
+
 
 
 }
