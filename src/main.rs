@@ -12,13 +12,23 @@ use crate::gwas_sum::{GwasSummary, LdFile, RefAlleles};
 use crate::mr::*;
 use clap::Parser;
 use std::io::{self};
+
+/// Application entry point.
+///
+/// Parses CLI arguments and executes one of the following tasks depending on flags:
+/// - vcf_clean: convert a VCF file to a summary-statistics TSV
+/// - modify: modify a summary-statistics file (filter by p-value, MAF, or merge alleles)
+/// - compute_h2: compute SNP heritability (requires LD file)
+/// - genetic_correlation: compute genetic correlation between two sumstats (requires LD file)
+/// - snp_clump: perform LD-based SNP clumping using an LD directory
+/// - mr_ivm / mr_egger: run Mendelian Randomization analyses (IVW / Egger)
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    //mission1: clean the vcf data to sumstats file
+    // mission1: clean the vcf data to a summary-statistics file
     if let Some(file_path) = args.vcf_clean {
         let output_path = args.output.clone().unwrap_or_else(|| {
-            // 默认输出文件名
+            // default output filename
             format!("{}.vcf_cleaned.tsv", file_path)
         });
         let gwas_vcf = GwasSummary::from_path(&file_path);
@@ -33,10 +43,10 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    //mission2: modify the sumstats file maf/p/merge-allele
+    // mission2: modify the sumstats file (maf / p / merge-allele)
     if let Some(input_path) = args.modify {
         let output_path = args.output.clone().unwrap_or_else(|| {
-            // 默认输出文件名
+            // default output filename
             format!("{}.modified.tsv", input_path)
         });
         let gwas_sum = GwasSummary::from_path(&input_path);
@@ -77,7 +87,7 @@ fn main() -> io::Result<()> {
         if let Some(ld_path) = args.ld.clone() {
             let ld = LdFile::from_path(&ld_path);
             let h2 = gwas_sum.compute_h2(ld)?;
-            println!("遗传率是{}", h2)
+            println!("Heritability (h2): {}", h2)
         } else {
             panic!("please input a ld file")
         }
@@ -97,10 +107,10 @@ fn main() -> io::Result<()> {
         }
     }
 
-    //Second part: MR analysis
+    // Second part: MR analysis
     if let Some(input_path) = args.snp_clump {
         let output_path = args.output.clone().unwrap_or_else(|| {
-            // 默认输出文件名
+            // default output filename
             format!("{}.clumped.tsv", input_path)
         });
         let gwas_sum = GwasSummary::from_path(&input_path);

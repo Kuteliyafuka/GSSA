@@ -1,61 +1,76 @@
+//! GWAS summary utilities and LD file helpers
+//!
+//! This module provides:
+//! - GwasSummary: load/clean GWAS summary-statistics files and basic filters
+//! - SnpInfo / AllelesInfo: per-SNP data structures and parsers
+//! - LdFile: load LD score mappings
+//! - compute_genetic_correlation: estimate genetic correlation between two GWAS files
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 
-/// 存储GWAS汇总统计信息文件的信息
+// ...existing code...
+
+/// Represents a GWAS summary-statistics file.
 #[derive(Debug, Clone)]
 pub struct GwasSummary {
-    /// 汇总统计文件路径
+    /// Path to the summary-statistics file.
     pub summary_path: String,
 }
-/// 存储GWAS汇总统计信息文件的信息
+
+/// Represents a reference alleles file.
 #[derive(Debug, Clone)]
 pub struct RefAlleles {
-    /// 汇总统计文件路径
+    /// Path to the alleles file.
     pub alleles_path: String,
 }
 
-/// 存储单个SNP（单核苷酸多态性）的信息
+/// Stores allele information for a single SNP.
 #[derive(Debug, Clone)]
 pub struct AllelesInfo {
-    /// SNP名称（如 rs123456）
+    /// SNP identifier (e.g. "rs123456").
     pub snp: String,
-
-    /// 等位基因（如 "A" / "G"）
+    /// Allele 1 (e.g. "A").
     pub a1: String,
+    /// Allele 2 (e.g. "G").
     pub a2: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct LdFile {
-    /// 汇总统计文件路径
+    /// Path to the LD score file.
     pub ld_path: String,
 }
-/// 存储单个SNP（单核苷酸多态性）的信息
+
+/// Stores information for one SNP in GWAS summary statistics.
 #[derive(Debug, Clone)]
 pub struct SnpInfo {
-    /// SNP名称（如 rs123456）
+    /// SNP identifier (e.g. "rs123456")
     pub snp: String,
-    /// 所在染色体编号
+    /// Chromosome name/number
     pub chr: String,
-    /// 在染色体上的位置（bp）
+    /// Position (bp)
     pub pos: u32,
-    /// 等位基因（如 "A" / "G"）
+    /// Alleles (A1 / A2)
     pub a1: String,
     pub a2: String,
-    /// 频率（如次要等位基因频率）
+    /// Minor allele frequency (optional)
     pub maf: Option<f64>,
-    /// 效应值（beta 或 OR）
+    /// Effect size (beta or log-OR)
     pub beta: Option<f64>,
-    /// 标准误
+    /// Standard error of effect size
     pub se: Option<f64>,
-    /// P 值
+    /// P-value
     pub p: Option<f64>,
-    /// effective sample size
+    /// Effective sample size
     pub neff: Option<f64>,
 }
 
 impl SnpInfo {
+    /// Parse a TSV line produced by `clean_vcf()` into SnpInfo.
+    ///
+    /// Expected columns (tab-separated):
+    /// CHR, POS, SNP, A1, A2, BETA, SE, P, MAF, NEFF
     pub fn from_cleaned_line(line: &str) -> Option<Self> {
         if line.starts_with('#') || line.trim().is_empty() {
             return None;
@@ -64,7 +79,7 @@ impl SnpInfo {
         let fields: Vec<&str> = line.trim().split('\t').collect();
 
         if fields.len() < 10 {
-            panic!("❌ 输入文件格式错误：列数不足。请检查是否是经过 clean_vcf 处理的文件。");
+            panic!("Input file format error: not enough columns. Ensure the file was produced by clean_vcf.");
         }
 
         Some(Self {
@@ -80,7 +95,11 @@ impl SnpInfo {
             neff: fields[9].parse().ok(),
         })
     }
-    /// 从 VCF 文件的一行解析出 SnpInfo
+
+    /// Parse a VCF-like line into SnpInfo.
+    ///
+    /// The function expects at least 10 columns and that the FORMAT/SAMPLE fields
+    /// include tags such as ES, SE, LP, AF, SS when present.
     pub fn from_vcf_line(line: &str) -> Option<Self> {
         if line.starts_with('#') {
             return None;
@@ -97,7 +116,7 @@ impl SnpInfo {
         let a1 = fields[3].to_string();
         let a2 = fields[4].to_string();
 
-        // 解析 format 和 sample 数据
+        // Parse FORMAT and sample fields (colon-separated key:value)
         let format = fields[8];
         let values = fields[9];
         let keys: Vec<&str> = format.split(':').collect();
@@ -130,7 +149,7 @@ impl SnpInfo {
         })
     }
 
-    /// 输出为一行 TSV 格式
+    /// Format SnpInfo as a TSV line matching the header written by `write_snps`.
     pub fn to_tsv(&self) -> String {
         format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -149,13 +168,16 @@ impl SnpInfo {
 }
 
 impl GwasSummary {
-    /// 创建对象
+    /// Create a GwasSummary that points to `path`.
     pub fn from_path(path: &str) -> Self {
         Self {
             summary_path: path.to_string(),
         }
     }
-    /// 解析 VCF 文件，返回清洗后的 SNP 列表
+
+    /// Read a VCF-like file and extract cleaned SNP records.
+    ///
+    /// Returns a vector of SnpInfo parsed from sample columns.
     pub fn clean_vcf(&self) -> io::Result<Vec<SnpInfo>> {
         let file = File::open(&self.summary_path)?;
         let reader = BufReader::new(file);
@@ -169,19 +191,21 @@ impl GwasSummary {
         Ok(snps)
     }
 
-    /// 从 cleaned GWAS summary 文件加载所有 SNP 信息
+    /// Load SNPs from a cleaned GWAS summary file (TSV).
+    ///
+    /// Skips empty lines and the header line that contains "CHR".
     pub fn load_snps(&self) -> io::Result<Vec<SnpInfo>> {
         let file = File::open(&self.summary_path)?;
         let reader = BufReader::new(file);
         let mut snps = Vec::new();
         for (_i, line) in reader.lines().enumerate() {
             let line = line?;
-            // 跳过空行或表头
+            // Skip empty lines or header
             if line.trim().is_empty() {
                 continue;
             }
             if line.contains("CHR") {
-                continue; // 跳过表头行
+                continue; // skip header row
             }
 
             if let Some(snp_info) = SnpInfo::from_cleaned_line(&line) {
@@ -192,7 +216,7 @@ impl GwasSummary {
         Ok(snps)
     }
 
-    /// 获取文件名（不带路径）
+    /// Return the filename component of the summary_path, if available.
     pub fn filename(&self) -> Option<String> {
         std::path::Path::new(&self.summary_path)
             .file_name()
@@ -200,35 +224,37 @@ impl GwasSummary {
             .map(|s| s.to_string())
     }
 
-    /// 过滤 p 值小于阈值
+    /// Filter SNPs by p-value threshold (retain SNPs with p <= threshold).
     pub fn filter_by_p(snps: Vec<SnpInfo>, p_threshold: f64) -> Vec<SnpInfo> {
         let result: Vec<SnpInfo> = snps
             .into_iter()
             .filter(|s| s.p.map_or(false, |p| p <= p_threshold))
             .collect();
         println!(
-            "filter by p value<{},remaining snp {}",
+            "Filtered by p <= {}; remaining SNPs: {}",
             p_threshold,
             result.len()
         );
         result
     }
 
-    /// 过滤 p 值小于阈值
+    /// Filter SNPs by MAF threshold (retain SNPs with maf >= threshold).
     pub fn filter_by_maf(snps: Vec<SnpInfo>, maf_threshold: f64) -> Vec<SnpInfo> {
         let result: Vec<SnpInfo> = snps
             .into_iter()
             .filter(|s| s.maf.map_or(false, |maf| maf >= maf_threshold))
             .collect();
         println!(
-            "filter by maf>{},remaining snp {}",
+            "Filtered by MAF >= {}; remaining SNPs: {}",
             maf_threshold,
             result.len()
         );
         result
     }
 
-    /// 过滤 SNP 名称列表
+    /// Keep SNPs whose (SNP, A2, A1) or (SNP, A1, A2) appear in `snp_list`.
+    ///
+    /// When an entry matches with swapped alleles, flip MAF (maf -> 1 - maf).
     pub fn merge_alleles<'a>(
         snps: Vec<SnpInfo>,
         snp_list: Vec<(&'a str, &'a str, &'a str)>,
@@ -256,31 +282,34 @@ impl GwasSummary {
             })
             .collect();
         result1.extend(result2);
-        println!("merge alleles, remaining snps {}", result1.len());
+        println!("Merged alleles; remaining SNPs: {}", result1.len());
         result1
     }
 
+    /// Compute SNP-based heritability (h^2) using LD scores.
+    ///
+    /// Requires LD scores mapped by SNP name via `LdFile`.
     pub fn compute_h2(&self, ld: LdFile) -> io::Result<f64> {
-        // 1️⃣ 加载 GWAS summary 中的 SNP
+        // 1. Load SNPs from the GWAS summary
         let snps = self.load_snps()?; // Vec<SnpInfo>
 
-        // 2️⃣ 加载 LD 分数
-        let ld_map = ld.load_ld_scores()?; // HashMap<snp_name, ldscore>
+        // 2. Load LD scores: HashMap<SNP, ldscore>
+        let ld_map = ld.load_ld_scores()?; // HashMap<String, f64>
 
-        // 3️⃣ 遍历 SNP，计算每个 SNP 对 h² 的贡献
-        let mut x_vec = Vec::new(); // L2
-        let mut y_vec = Vec::new(); // Z^2 -1
-        let mut neff_vec = Vec::new(); // NEFF
+        // 3. Build vectors for regression: x = L2, y = Z^2 - 1, collect neff
+        let mut x_vec = Vec::new();
+        let mut y_vec = Vec::new();
+        let mut neff_vec = Vec::new();
 
         for snp in snps.iter() {
-            // 取 beta
+            // obtain beta and se; skip SNPs missing these fields
             let beta = match snp.beta {
                 Some(b) => b,
-                None => continue, // 没有 beta 的 SNP 跳过
+                None => continue,
             };
             let se = match snp.se {
                 Some(b) => b,
-                None => continue, // 没有 beta 的 SNP 跳过
+                None => continue,
             };
             let neff = match snp.neff {
                 Some(b) => b,
@@ -290,17 +319,17 @@ impl GwasSummary {
 
             let l2 = match ld_map.get(&snp.snp) {
                 Some(&val) => val,
-                None => continue, // LD 不存在则跳过
+                None => continue, // skip if LD score not available
             };
 
             x_vec.push(l2);
             y_vec.push(z * z - 1.0);
             neff_vec.push(neff);
         }
-        let m = x_vec.len() as f64; // SNP 总数
+        let m = x_vec.len() as f64; // number of SNPs
         let mean_neff = neff_vec.iter().sum::<f64>() / m;
 
-        // 最小二乘法计算 slope
+        // Ordinary least squares slope
         let x_mean = x_vec.iter().sum::<f64>() / m;
         let y_mean = y_vec.iter().sum::<f64>() / m;
 
@@ -313,15 +342,16 @@ impl GwasSummary {
         let denominator: f64 = x_vec.iter().map(|x| (x - x_mean).powi(2)).sum();
         let slope = numerator / denominator;
 
-        // h^2 = slope * M / N
+        // h^2 = slope * M / mean_neff
         let h2 = slope * m / mean_neff;
         println!(
-            "slope {},snp number {},mean effective sample number {}",
+            "slope {}, SNPs {}, mean effective sample size {}",
             slope, m, mean_neff
         );
         Ok(h2)
     }
-    /// 将 SNP 列表写入任意 Writer
+
+    /// Write a list of SnpInfo to a TSV file (header included).
     pub fn write_snps(snps: &[SnpInfo], output_path: &str) -> io::Result<()> {
         let output_file = File::create(output_path)?;
         let mut writer = BufWriter::new(output_file);
@@ -334,18 +364,22 @@ impl GwasSummary {
 }
 
 impl LdFile {
-    /// 创建对象
+    /// Create an LdFile pointing to `path`.
     pub fn from_path(path: &str) -> Self {
         Self {
             ld_path: path.to_string(),
         }
     }
-    /// 从 LD Score 文件中读取 SNP -> LD Score 的映射
+
+    /// Load LD scores from a file into a HashMap<SNP, ld_score>.
+    ///
+    /// The function skips a header line containing "SNP" and expects the LD score
+    /// to be in column index 5 (sixth column).
     pub fn load_ld_scores(&self) -> io::Result<HashMap<String, f64>> {
         let file = File::open(&self.ld_path)?;
         let reader = BufReader::new(file);
         let mut ld_map = HashMap::new();
-        // 跳过表头
+        // skip header
         for (_i, line) in reader.lines().enumerate() {
             let line = line?;
             if line.contains("SNP") {
@@ -353,10 +387,10 @@ impl LdFile {
             }
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() < 6 {
-                continue; // 跳过不完整行
+                continue; // skip incomplete lines
             }
-            let snp = fields[1].to_string(); // SNP 列
-            let ld_score = fields[5].parse::<f64>().unwrap_or(0.0); // L2 列
+            let snp = fields[1].to_string(); // SNP column
+            let ld_score = fields[5].parse::<f64>().unwrap_or(0.0); // L2 column
             ld_map.insert(snp, ld_score);
         }
 
@@ -365,23 +399,28 @@ impl LdFile {
 }
 
 impl RefAlleles {
+    /// Create a RefAlleles that points to `path`.
     pub fn from_path(path: &str) -> Self {
         Self {
             alleles_path: path.to_string(),
         }
     }
+
+    /// Load allele reference file into a vector of AllelesInfo.
+    ///
+    /// Skips empty lines and header lines containing "CHR".
     pub fn load_alleles(&self) -> io::Result<Vec<AllelesInfo>> {
         let file = File::open(&self.alleles_path)?;
         let reader = BufReader::new(file);
         let mut snps = Vec::new();
         for (_i, line) in reader.lines().enumerate() {
             let line = line?;
-            // 跳过空行或表头
+            // skip empty lines or header
             if line.trim().is_empty() {
                 continue;
             }
             if line.contains("CHR") {
-                continue; // 跳过表头行
+                continue; // skip header row
             }
             if let Some(snp_info) = AllelesInfo::from_cleaned_line(&line) {
                 snps.push(snp_info);
@@ -389,6 +428,8 @@ impl RefAlleles {
         }
         Ok(snps)
     }
+
+    /// Extract (SNP, A2, A1) tuples from AllelesInfo slice for matching.
     pub fn extract_snp_names(snps: &[AllelesInfo]) -> Vec<(&str, &str, &str)> {
         snps.iter()
             .map(|s| (s.snp.as_str(), s.a2.as_str(), s.a1.as_str()))
@@ -397,6 +438,9 @@ impl RefAlleles {
 }
 
 impl AllelesInfo {
+    /// Parse a cleaned allele line into AllelesInfo.
+    ///
+    /// Expected columns (tab-separated): SNP, A1, A2
     pub fn from_cleaned_line(line: &str) -> Option<Self> {
         if line.starts_with('#') || line.trim().is_empty() {
             return None;
@@ -404,7 +448,7 @@ impl AllelesInfo {
         let fields: Vec<&str> = line.trim().split('\t').collect();
 
         if fields.len() < 3 {
-            panic!("❌ 输入文件格式错误：列数不足。请检查是否是经过 clean_vcf 处理的文件。");
+            panic!("Input alleles file format error: not enough columns. Ensure the file was produced by clean_vcf.");
         }
 
         Some(Self {
@@ -415,13 +459,15 @@ impl AllelesInfo {
     }
 }
 
-/// compute the genetic correlation
+/// Compute genetic correlation between two GWAS summary files using LD scores.
+///
+/// Returns an estimate of r_g (genetic correlation).
 pub fn compute_genetic_correlation(
     file_path1: GwasSummary,
     file_path2: GwasSummary,
     ld_path: LdFile,
 ) -> io::Result<f64> {
-    // 计算两个性状的 SNP 遗传力
+    // compute SNP heritability for both traits
     let h1_2 = file_path1.compute_h2(ld_path.clone())?;
     let h2_2 = file_path2.compute_h2(ld_path.clone())?;
     let ld_map = ld_path.load_ld_scores()?;
@@ -432,14 +478,14 @@ pub fn compute_genetic_correlation(
     let snps1 = file_path1.load_snps()?;
     let snps2 = file_path2.load_snps()?;
     for snp in snps1.iter() {
-        // 取 beta
+        // require beta, se and neff
         let beta = match snp.beta {
             Some(b) => b,
-            None => continue, // 没有 beta 的 SNP 跳过
+            None => continue,
         };
         let se = match snp.se {
             Some(b) => b,
-            None => continue, // 没有 beta 的 SNP 跳过
+            None => continue,
         };
         let neff = match snp.neff {
             Some(b) => b,
@@ -451,14 +497,14 @@ pub fn compute_genetic_correlation(
     }
 
     for snp in snps2.iter() {
-        // 取 beta
+        // require beta, se and neff
         let beta = match snp.beta {
             Some(b) => b,
-            None => continue, // 没有 beta 的 SNP 跳过
+            None => continue,
         };
         let se = match snp.se {
             Some(b) => b,
-            None => continue, // 没有 beta 的 SNP 跳过
+            None => continue,
         };
         let neff = match snp.neff {
             Some(b) => b,
@@ -469,6 +515,7 @@ pub fn compute_genetic_correlation(
         map2_nol.insert(snp.snp.clone(), (z, neff));
     }
 
+    // attach LD scores to z / neff entries, dropping SNPs without LD score
     let map1: HashMap<String, (f64, f64, f64)> = map1_nol
         .into_iter()
         .flat_map(|(id, (z, neff))| ld_map.get(&id).map(|&l2| (id, (z, l2, neff))))
@@ -496,7 +543,7 @@ pub fn compute_genetic_correlation(
     let n1 = n1_vec.iter().sum::<f64>() / m;
     let n2 = n2_vec.iter().sum::<f64>() / m;
 
-    // 构建 Z1Z2 和 L2 向量
+    // build vectors z1*z2 and L2
     let mut z1z2_vec: Vec<f64> = Vec::new();
     let mut l2_vec: Vec<f64> = Vec::new();
 
@@ -504,11 +551,11 @@ pub fn compute_genetic_correlation(
         let (z1, l2_1, _) = map1_filtered.get(key).unwrap();
         let (z2, l2_2, _) = map2_filtered.get(key).unwrap();
         z1z2_vec.push(z1 * z2);
-        // 两个文件的 L2 理论上应该一样，这里取平均更稳妥
+        // take average L2 for robustness
         l2_vec.push((l2_1 + l2_2) / 2.0);
     }
 
-    // 最小二乘法线性回归 slope
+    // OLS slope for regression of z1*z2 on L2
     let x_mean = l2_vec.iter().sum::<f64>() / m;
     let y_mean = z1z2_vec.iter().sum::<f64>() / m;
 
@@ -522,7 +569,7 @@ pub fn compute_genetic_correlation(
 
     let slope = numerator / denominator;
 
-    // 根据理论公式计算 genetic correlation
+    // theoretical formula to convert slope to genetic correlation
     let genetic_correlation = slope * m / ((n1 * n2).sqrt() * h1_h2);
 
     println!(
