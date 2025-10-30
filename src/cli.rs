@@ -81,4 +81,13 @@ pub struct Args {
     /// Outcome GWAS summary file for MR analyses
     #[clap(long)]
     pub outcome: Option<String>,
+
+    #[clap(long, num_args = 2, value_names = ["GWAS1", "GWAS2"])]
+    pub pleio_identify: Option<Vec<String>>,
+
+    #[clap(long)]
+    pub min_z: Option<f64>,
+
+    #[clap(long, num_args = 2, value_names = ["GWAS1", "GWAS2"])]
+    pub coloc: Option<Vec<String>>,
 }

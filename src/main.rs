@@ -6,12 +6,14 @@
 mod cli;
 mod gwas_sum;
 mod mr;
+mod pleio;
 use crate::cli::Args;
 use crate::gwas_sum::compute_genetic_correlation;
 use crate::gwas_sum::{GwasSummary, LdFile, RefAlleles};
 use crate::mr::*;
 use clap::Parser;
 use std::io::{self};
+use crate::pleio::{pleio_identify,write_pleio_results,coloc};
 
 /// Application entry point.
 ///
@@ -144,6 +146,45 @@ fn main() -> io::Result<()> {
             mr_egger(exposure, outcome)?;
         }
     }
+
+    if let Some(paths) = args.pleio_identify {
+        let mut z_threshold = 2.5;
+        let mut p_threshold = 1e-4;
+        let output_path = args.output.clone().unwrap_or_else(|| {
+            // default output filename
+            format!("{}", &paths[0])
+        }); 
+        if let Some(z) = args.min_z {
+            z_threshold=z;
+        }
+        if let Some(p) = args.max_p {
+            p_threshold=p
+        }
+        if paths.len() == 2 {
+            let gwas_file1 = GwasSummary::from_path(&paths[0]);
+            let gwas_file2 = GwasSummary::from_path(&paths[1]);
+            let snps1 = gwas_file1.load_snps()?;
+            let snps2 = gwas_file2.load_snps()?;
+            let results = pleio_identify(snps1, snps2, z_threshold,p_threshold);
+            write_pleio_results(&results, &output_path)?;
+        }
+        return Ok(())
+    }
+
+    if let Some(paths) = args.coloc {
+        let output_path = args.output.clone().unwrap_or_else(|| {
+            // default output filename
+            format!("{}", &paths[0])
+        }); 
+        if paths.len() == 2 {
+            let gwas_file1 = GwasSummary::from_path(&paths[0]);
+            let gwas_file2 = GwasSummary::from_path(&paths[1]);
+            let snps1 = gwas_file1.load_snps()?;
+            let snps2 = gwas_file2.load_snps()?;
+            coloc(snps1, snps2, output_path)?;
+        }
+    }
+
 
     Ok(())
 }
