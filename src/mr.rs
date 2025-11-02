@@ -288,7 +288,7 @@ pub fn mr_ivm(exposure: GwasSummary, outcome: GwasSummary) -> io::Result<()> {
     for s_out in snps_out.iter() {
         if let (Some(beta_out), Some(se_out)) = (s_out.beta, s_out.se) {
             if let Some(s_exp) = exp_map.get(&s_out.snp) {
-                if let (Some(beta_exp), Some(se_exp)) = (s_exp.beta, s_exp.se) {
+                if let (Some(beta_exp), Some(_se_exp)) = (s_exp.beta, s_exp.se) {
                     beta_exp_vec.push(beta_exp);
                     beta_out_vec.push(beta_out);
                     // weight is outcome's 1 / SE^2
@@ -346,7 +346,7 @@ pub fn mr_egger(exposure: GwasSummary, outcome: GwasSummary) -> io::Result<()> {
     for s_out in snps_out.iter() {
         if let (Some(beta_out), Some(se_out)) = (s_out.beta, s_out.se) {
             if let Some(s_exp) = exp_map.get(&s_out.snp) {
-                if let (Some(beta_exp), Some(se_exp)) = (s_exp.beta, s_exp.se) {
+                if let (Some(beta_exp), Some(_se_exp)) = (s_exp.beta, s_exp.se) {
                     beta_exp_vec.push(beta_exp);
                     beta_out_vec.push(beta_out);
                     // weight is outcome's 1 / SE^2

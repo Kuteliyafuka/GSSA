@@ -8,7 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
-
+use crate::mr::linear_regression;
+use ndarray::prelude::*;
 // ...existing code...
 
 /// Represents a GWAS summary-statistics file.
@@ -329,24 +330,28 @@ impl GwasSummary {
         let m = x_vec.len() as f64; // number of SNPs
         let mean_neff = neff_vec.iter().sum::<f64>() / m;
 
-        // Ordinary least squares slope
-        let x_mean = x_vec.iter().sum::<f64>() / m;
-        let y_mean = y_vec.iter().sum::<f64>() / m;
+        // // Ordinary least squares slope
+        // let x_mean = x_vec.iter().sum::<f64>() / m;
+        // let y_mean = y_vec.iter().sum::<f64>() / m;
 
-        let numerator: f64 = x_vec
-            .iter()
-            .zip(y_vec.iter())
-            .map(|(x, y)| (x - x_mean) * (y - y_mean))
-            .sum();
+        // let numerator: f64 = x_vec
+        //     .iter()
+        //     .zip(y_vec.iter())
+        //     .map(|(x, y)| (x - x_mean) * (y - y_mean))
+        //     .sum();
 
-        let denominator: f64 = x_vec.iter().map(|x| (x - x_mean).powi(2)).sum();
-        let slope = numerator / denominator;
+        // let denominator: f64 = x_vec.iter().map(|x| (x - x_mean).powi(2)).sum();
+        // let slope = numerator / denominator;
 
         // h^2 = slope * M / mean_neff
+
+        let x_arr: Array1<f64> = Array1::from(x_vec);
+        let y_arr: Array1<f64> = Array1::from(y_vec);
+        let (intercept, slope, se_intercept, se_slope) = linear_regression(&x_arr, &y_arr);
         let h2 = slope * m / mean_neff;
         println!(
-            "slope {}, SNPs {}, mean effective sample size {}",
-            slope, m, mean_neff
+            "h2 {:.4},slope {:.4},intercept {:.4}, SNPs {}, mean effective sample size {},se_slope {:.4}, se_intercept {:.4}",
+            h2, slope, intercept, m, mean_neff, se_slope, se_intercept
         );
         Ok(h2)
     }
@@ -555,26 +560,29 @@ pub fn compute_genetic_correlation(
         l2_vec.push((l2_1 + l2_2) / 2.0);
     }
 
-    // OLS slope for regression of z1*z2 on L2
-    let x_mean = l2_vec.iter().sum::<f64>() / m;
-    let y_mean = z1z2_vec.iter().sum::<f64>() / m;
+    // // OLS slope for regression of z1*z2 on L2
+    // let x_mean = l2_vec.iter().sum::<f64>() / m;
+    // let y_mean = z1z2_vec.iter().sum::<f64>() / m;
 
-    let numerator: f64 = l2_vec
-        .iter()
-        .zip(z1z2_vec.iter())
-        .map(|(x, y)| (x - x_mean) * (y - y_mean))
-        .sum();
+    // let numerator: f64 = l2_vec
+    //     .iter()
+    //     .zip(z1z2_vec.iter())
+    //     .map(|(x, y)| (x - x_mean) * (y - y_mean))
+    //     .sum();
 
-    let denominator: f64 = l2_vec.iter().map(|x| (x - x_mean).powi(2)).sum();
+    // let denominator: f64 = l2_vec.iter().map(|x| (x - x_mean).powi(2)).sum();
 
-    let slope = numerator / denominator;
+    // let slope = numerator / denominator;
 
     // theoretical formula to convert slope to genetic correlation
+    let x_arr: Array1<f64> = Array1::from(l2_vec);
+    let y_arr: Array1<f64> = Array1::from(z1z2_vec);
+    let (intercept, slope, _se_intercept, _se_slope) = linear_regression(&x_arr, &y_arr);
     let genetic_correlation = slope * m / ((n1 * n2).sqrt() * h1_h2);
 
     println!(
-        "M = {:.0}, N1 = {:.0}, N2 = {:.0}, h1² = {:.4}, h2² = {:.4}, slope = {:.6}, r_g = {:.6}",
-        m, n1, n2, h1_2, h2_2, slope, genetic_correlation
+        "M = {:.0}, N1 = {:.0}, N2 = {:.0}, h1² = {:.4}, h2² = {:.4}, slope = {:.6}, r_g = {:.6},intercept = {:.4}",
+        m, n1, n2, h1_2, h2_2, slope, genetic_correlation, intercept
     );
 
     Ok(genetic_correlation)
