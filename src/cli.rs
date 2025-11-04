@@ -9,6 +9,8 @@ use clap::Parser;
 #[derive(Parser)]
 #[clap(author, version, about)]
 pub struct Args {
+    #[clap(long)]
+    pub sample_size: Option<f64>,
     /// GWAS summary statistics file to clean (VCF -> cleaned TSV)
     #[clap(long)]
     pub data_clean: Option<String>,

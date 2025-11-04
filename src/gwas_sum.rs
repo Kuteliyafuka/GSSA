@@ -239,16 +239,31 @@ impl GwasSummary {
         result
     }
 
+
     /// Filter SNPs by MAF threshold (retain SNPs with maf >= threshold).
     pub fn filter_by_maf(snps: Vec<SnpInfo>, maf_threshold: f64) -> Vec<SnpInfo> {
         let result: Vec<SnpInfo> = snps
             .into_iter()
-            .filter(|s| s.maf.map_or(false, |maf| maf >= maf_threshold))
+            .filter(|s| s.maf.map_or(false, |maf| maf >= maf_threshold && maf <= 1.0 -maf_threshold))
             .collect();
         println!(
             "Filtered by MAF >= {}; remaining SNPs: {}",
             maf_threshold,
             result.len()
+        );
+        result
+    }
+
+    pub fn add_sample_size(snps: Vec<SnpInfo>, sample_size:f64) -> Vec<SnpInfo> {
+        let result: Vec<SnpInfo> = snps
+            .into_iter()
+            .map(|mut s| {
+                s.neff = Some(sample_size); 
+                s})
+            .collect();
+        println!(
+            "set N = {}",
+            sample_size
         );
         result
     }
@@ -260,6 +275,7 @@ impl GwasSummary {
         snps: Vec<SnpInfo>,
         snp_list: Vec<(&'a str, &'a str, &'a str)>,
     ) -> Vec<SnpInfo> {
+        let mut flip_count = 0;
         let set: HashSet<(&str, &str, &str)> = snp_list.into_iter().collect();
         let mut result1: Vec<SnpInfo> = snps
             .clone()
@@ -269,9 +285,13 @@ impl GwasSummary {
                 set.contains(&key)
             })
             .map(|mut s| {
-                if let Some(maf) = s.maf {
-                    s.maf = Some(1.0 - maf);
+                if let Some(beta) = s.beta {
+                    s.beta = Some(0.0 - beta);
                 }
+                let a1 = s.a1;
+                s.a1 = s.a2;
+                s.a2 = a1;
+                flip_count += 1;
                 s
             })
             .collect();
@@ -281,9 +301,15 @@ impl GwasSummary {
                 let key = (s.snp.as_str(), s.a1.as_str(), s.a2.as_str());
                 set.contains(&key)
             })
+            .map(|mut s| {
+                if let Some(maf) = s.maf {
+                    s.maf = Some(1.0 - maf);
+                }
+                s
+            })
             .collect();
         result1.extend(result2);
-        println!("Merged alleles; remaining SNPs: {}", result1.len());
+        println!("Merged alleles; remaining SNPs: {},flipped alleles:{}", result1.len(),flip_count);
         result1
     }
 
@@ -360,7 +386,7 @@ impl GwasSummary {
     pub fn write_snps(snps: &[SnpInfo], output_path: &str) -> io::Result<()> {
         let output_file = File::create(output_path)?;
         let mut writer = BufWriter::new(output_file);
-        writeln!(writer, "CHR\tPOS\tSNP\tA1\tA2\tBETA\tSE\tP\tMAF\tNEFF")?;
+        writeln!(writer, "CHR\tPOS\tSNP\tA1\tA2\tBETA\tSE\tP\tMAF\tN")?;
         for snp in snps {
             writeln!(writer, "{}", snp.to_tsv())?;
         }
@@ -437,7 +463,7 @@ impl RefAlleles {
     /// Extract (SNP, A2, A1) tuples from AllelesInfo slice for matching.
     pub fn extract_snp_names(snps: &[AllelesInfo]) -> Vec<(&str, &str, &str)> {
         snps.iter()
-            .map(|s| (s.snp.as_str(), s.a2.as_str(), s.a1.as_str()))
+            .map(|s| (s.snp.as_str(), s.a1.as_str(), s.a2.as_str()))
             .collect()
     }
 }

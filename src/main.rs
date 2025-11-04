@@ -40,7 +40,10 @@ fn main() -> io::Result<()> {
                 .filename()
                 .expect("fail to read the filename of vcf file")
         );
-        let snps = gwas_vcf.clean_vcf()?;
+        let mut snps = gwas_vcf.clean_vcf()?;
+        if let Some(sample_size) = args.sample_size {
+            snps = GwasSummary::add_sample_size(snps, sample_size);
+        }
         GwasSummary::write_snps(&snps, &output_path)?;
         return Ok(());
     }
