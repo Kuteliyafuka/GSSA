@@ -92,4 +92,8 @@ pub struct Args {
 
     #[clap(long, num_args = 2, value_names = ["GWAS1", "GWAS2"])]
     pub coloc: Option<Vec<String>>,
+
+    #[clap(long)]
+    pub lead_snps: Option<String>,
+
 }

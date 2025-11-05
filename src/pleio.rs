@@ -195,3 +195,18 @@ pub fn coloc(snps1: Vec<SnpInfo>, snps2: Vec<SnpInfo>, output_path: String) -> s
     println!("\n✅ Results written to: {}", output_path);
     Ok(())
 }
+
+
+pub fn multi_coloc(lead_snps:Vec<SnpInfo>, snps1:Vec<SnpInfo>,snps2:Vec<SnpInfo>, output_path:String) -> std::io::Result<()> {
+    for lead in lead_snps {
+        let snp1_subset: Vec<SnpInfo> = snps1.iter().filter(|s| s.chr == lead.chr && (s.pos as i64 - lead.pos as i64).abs() <= 500_000).cloned().collect();
+        let snp2_subset: Vec<SnpInfo> = snps2.iter().filter(|s| s.chr == lead.chr && (s.pos as i64 - lead.pos as i64).abs() <= 500_000).cloned().collect();
+        if snp1_subset.is_empty() || snp2_subset.is_empty() {
+            eprintln!("No overlapping SNPs found around lead SNP: {}", lead.snp);
+            continue;
+        }
+        let coloc_output_path = format!("{}_coloc_{}.txt", output_path.trim_end_matches(".txt"), lead.snp);
+        coloc(snp1_subset, snp2_subset, coloc_output_path)?;
+    }
+    Ok(())
+}

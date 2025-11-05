@@ -13,7 +13,7 @@ use crate::gwas_sum::{GwasSummary, LdFile, RefAlleles};
 use crate::mr::*;
 use clap::Parser;
 use std::io::{self};
-use crate::pleio::{pleio_identify,write_pleio_results,coloc};
+use crate::pleio::{multi_coloc, pleio_identify, write_pleio_results};
 
 /// Application entry point.
 ///
@@ -174,7 +174,7 @@ fn main() -> io::Result<()> {
         return Ok(())
     }
 
-    if let Some(paths) = args.coloc {
+    /*if let Some(paths) = args.coloc {
         let output_path = args.output.clone().unwrap_or_else(|| {
             // default output filename
             format!("{}", &paths[0])
@@ -186,6 +186,25 @@ fn main() -> io::Result<()> {
             let snps2 = gwas_file2.load_snps()?;
             coloc(snps1, snps2, output_path)?;
         }
+    }*/
+
+    if let Some(lead_snps_path) = args.lead_snps {
+                let output_path = args.output.clone().unwrap_or_else(|| {
+            // default output filename
+            format!("{}", &lead_snps_path)
+        }); 
+        let lead_snps_sum = GwasSummary::from_path(&lead_snps_path);
+        let lead_snps = lead_snps_sum.load_snps()?;
+        if let Some(coloc_paths) = args.coloc {
+            if coloc_paths.len() == 2 {
+                let gwas_file1 = GwasSummary::from_path(&coloc_paths[0]);
+                let gwas_file2 = GwasSummary::from_path(&coloc_paths[1]);
+                let snps1 = gwas_file1.load_snps()?;
+                let snps2 = gwas_file2.load_snps()?;
+                multi_coloc(lead_snps, snps1, snps2, output_path)?;
+            }
+        }
+        
     }
 
 
