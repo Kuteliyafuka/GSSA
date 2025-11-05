@@ -191,7 +191,7 @@ fn main() -> io::Result<()> {
     if let Some(lead_snps_path) = args.lead_snps {
                 let output_path = args.output.clone().unwrap_or_else(|| {
             // default output filename
-            format!("{}", &lead_snps_path)
+            format!("{}.coloc_summary", &lead_snps_path)
         }); 
         let lead_snps_sum = GwasSummary::from_path(&lead_snps_path);
         let lead_snps = lead_snps_sum.load_snps()?;
