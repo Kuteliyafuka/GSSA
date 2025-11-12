@@ -84,16 +84,24 @@ pub struct Args {
     #[clap(long)]
     pub outcome: Option<String>,
 
-    #[clap(long, num_args = 2, value_names = ["GWAS1", "GWAS2"])]
-    pub pleio_identify: Option<Vec<String>>,
+/// Identify pleiotropic loci between two GWAS files
+#[clap(long, num_args = 2, value_names = ["GWAS1", "GWAS2"])]
+pub pleio_identify: Option<Vec<String>>,
 
-    #[clap(long)]
-    pub min_z: Option<f64>,
+/// Minimum Z-score threshold for pleiotropy
+#[clap(long)]
+pub min_z: Option<f64>,
 
-    #[clap(long, num_args = 2, value_names = ["GWAS1", "GWAS2"])]
-    pub coloc: Option<Vec<String>>,
+/// Colocalization analysis between two GWAS files
+#[clap(long, num_args = 2, value_names = ["GWAS1", "GWAS2"])]
+pub coloc: Option<Vec<String>>,
 
-    #[clap(long)]
-    pub lead_snps: Option<String>,
+/// File with lead SNPs for colocalization
+#[clap(long)]
+pub lead_snps: Option<String>,
+
+/// Fast modification of a GWAS summary file with default filters
+#[clap(long)]
+pub fast_modify: Option<String>,
 
 }

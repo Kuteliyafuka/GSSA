@@ -17,6 +17,9 @@ pub struct PleioResult {
 pub struct ColocResult {
     pub lead_snp: String,
     pub pleio_region: String,
+    pub pp_h0: f64,
+    pub pp_h1: f64,
+    pub pp_h2: f64,
     pub pp_h3: f64,
     pub pp_h4: f64,
     pub max_h4_snp: String,
@@ -159,6 +162,9 @@ pub fn coloc(snps1: Vec<SnpInfo>, snps2: Vec<SnpInfo>, lead_snp: &str, output_pa
         return Ok(ColocResult {
             lead_snp: lead_snp.to_string(),
             pleio_region: "NA".to_string(),
+            pp_h0: f64::NAN,
+            pp_h1: f64::NAN,
+            pp_h2: f64::NAN,
             pp_h3: f64::NAN,
             pp_h4: f64::NAN,
             max_h4_snp: "NA".to_string(),
@@ -183,6 +189,9 @@ pub fn coloc(snps1: Vec<SnpInfo>, snps2: Vec<SnpInfo>, lead_snp: &str, output_pa
 
     // --- 后验概率 ---
     let pp: Vec<f64> = bfs.iter().map(|x| x / sum_bf).collect();
+    let pp_h0 = pp[0];
+    let pp_h1 = pp[1];
+    let pp_h2 = pp[2];
     let pp_h3 = pp[3];
     let pp_h4 = pp[4];
 
@@ -209,6 +218,9 @@ pub fn coloc(snps1: Vec<SnpInfo>, snps2: Vec<SnpInfo>, lead_snp: &str, output_pa
     Ok(ColocResult {
         lead_snp: lead_snp.to_string(),
         pleio_region,
+        pp_h0,
+        pp_h1,
+        pp_h2,
         pp_h3,
         pp_h4,
         max_h4_snp,
@@ -256,7 +268,7 @@ pub fn multi_coloc(
     // --- 输出汇总结果 ---
     let file = File::create(&output_path)?;
     let mut writer = BufWriter::new(file);
-    writeln!(writer, "lead_snp\tpleio_region\tPP_H3\tPP_H4\tmax_H4_snp\tmax_H4_value")?;
+    writeln!(writer, "SNP\tpleio_region\tPP_H0\tPP_H1\tPP_H2\tPP_H3\tPP_H4\tmax_H4_snp\tmax_H4_value\tcausal_variant")?;
     let mut causal_variants_number = 0;
     let mut is_causal_variant: &str;
     for r in results {
@@ -268,8 +280,8 @@ pub fn multi_coloc(
         }
         writeln!(
             writer,
-            "{}\t{}\t{:.6e}\t{:.6e}\t{}\t{:.6e}\t{}",
-            r.lead_snp, r.pleio_region, r.pp_h3, r.pp_h4, r.max_h4_snp, r.max_h4_value, is_causal_variant
+            "{}\t{}\t{:.6e}\t{:.6e}\t{:.6e}\t{:.6e}\t{:.6e}\t{}\t{:.6e}\t{}",
+            r.lead_snp, r.pleio_region,r.pp_h0,r.pp_h1, r.pp_h2, r.pp_h3, r.pp_h4, r.max_h4_snp, r.max_h4_value, is_causal_variant
         )?;
     }
     writer.flush()?;

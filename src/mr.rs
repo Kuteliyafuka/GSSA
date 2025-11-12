@@ -226,6 +226,7 @@ pub fn weighted_linear_regression(
 }
 
 /// Ordinary least squares linear regression (equal weights)
+#[allow(dead_code)]
 pub fn linear_regression(x: &Array1<f64>, y: &Array1<f64>) -> (f64, f64, f64, f64) {
     assert_eq!(x.len(), y.len());
     let w = &Array1::from_elem(x.len(), 1.0);

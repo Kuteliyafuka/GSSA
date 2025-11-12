@@ -7,6 +7,7 @@ mod cli;
 mod gwas_sum;
 mod mr;
 mod pleio;
+mod fast_gwas;
 use crate::cli::Args;
 use crate::gwas_sum::compute_genetic_correlation;
 use crate::gwas_sum::{GwasSummary, LdFile, RefAlleles};
@@ -14,7 +15,8 @@ use crate::mr::*;
 use clap::Parser;
 use std::io::{self};
 use crate::pleio::{multi_coloc, pleio_identify, write_pleio_results};
-
+use crate::fast_gwas::filter_gwas;
+use std::path::Path;
 /// Application entry point.
 ///
 /// Parses CLI arguments and executes one of the following tasks depending on flags:
@@ -205,6 +207,21 @@ fn main() -> io::Result<()> {
             }
         }
         
+    }
+    if let Some(input_path) = args.fast_modify {
+        let output_path = args.output.clone().unwrap_or_else(|| {
+            // default output filename
+            format!("{}.modified.tsv", input_path)
+        });
+        if let Some(hm3_path) = args.merge_alleles {
+
+            filter_gwas(
+                Path::new(&hm3_path),
+                Path::new(&input_path),
+                Path::new(&output_path),
+            )?;
+        }
+
     }
 
 

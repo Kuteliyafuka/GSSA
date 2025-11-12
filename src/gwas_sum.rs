@@ -8,7 +8,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
-use crate::mr::linear_regression;
 use ndarray::prelude::*;
 // ...existing code...
 
@@ -327,35 +326,27 @@ impl GwasSummary {
         let mut x_vec = Vec::new();
         let mut y_vec = Vec::new();
         let mut neff_vec = Vec::new();
-
+        let mut w_vec = Vec::new();
         for snp in snps.iter() {
-            // obtain beta and se; skip SNPs missing these fields
-            let beta = match snp.beta {
-                Some(b) => b,
-                None => continue,
-            };
-            let se = match snp.se {
-                Some(b) => b,
-                None => continue,
-            };
-            let neff = match snp.neff {
-                Some(b) => b,
-                None => continue,
-            };
+            let beta = match snp.beta { Some(b) => b, None => continue };
+            let se = match snp.se { Some(b) => b, None => continue };
+            let neff = match snp.neff { Some(b) => b, None => continue };
             let z = beta / se;
 
             let l2 = match ld_map.get(&snp.snp) {
                 Some(&val) => val,
-                None => continue, // skip if LD score not available
+                None => continue,
             };
 
             x_vec.push(l2);
             y_vec.push(z * z - 1.0);
+            w_vec.push(1.0 / (se * se));  // ✅ 保证与 x_vec/y_vec 同步
             neff_vec.push(neff);
         }
         let m = x_vec.len() as f64; // number of SNPs
         let mean_neff = neff_vec.iter().sum::<f64>() / m;
-
+        println!("x_vec len = {}, y_vec len = {}, neff_vec len = {}", 
+            x_vec.len(), y_vec.len(), neff_vec.len());
         // // Ordinary least squares slope
         // let x_mean = x_vec.iter().sum::<f64>() / m;
         // let y_mean = y_vec.iter().sum::<f64>() / m;
@@ -371,7 +362,7 @@ impl GwasSummary {
 
         // h^2 = slope * M / mean_neff
 
-        let x_arr: Array1<f64> = Array1::from(x_vec);
+        /*let x_arr: Array1<f64> = Array1::from(x_vec);
         let y_arr: Array1<f64> = Array1::from(y_vec);
         let (intercept, slope, se_intercept, se_slope) = linear_regression(&x_arr, &y_arr);
         let h2 = slope * m / mean_neff;
@@ -379,6 +370,40 @@ impl GwasSummary {
             "h2 {:.4},slope {:.4},intercept {:.4}, SNPs {}, mean effective sample size {},se_slope {:.4}, se_intercept {:.4}",
             h2, slope, intercept, m, mean_neff, se_slope, se_intercept
         );
+        Ok(h2)*/
+        // 构造 ndarray
+        let x_arr: Array1<f64> = Array1::from(x_vec);
+        let y_arr: Array1<f64> = Array1::from(y_vec);
+
+        // 权重：用每个 SNP 的 se 计算权重 w = 1 / se^2
+        //let w_vec: Vec<f64> = neff_vec.iter().map(|&n| n).collect(); // 或者换成 1/se^2
+        let w_arr: Array1<f64> = Array1::from(w_vec);
+
+        // 加权线性回归
+        let w_sum = w_arr.sum();
+        let x_mean = (&x_arr * &w_arr).sum() / w_sum;
+        let y_mean = (&y_arr * &w_arr).sum() / w_sum;
+
+        let numerator = ((&x_arr - x_mean) * (&y_arr - y_mean) * &w_arr).sum();
+        let denominator = ((&x_arr - x_mean).mapv(|v| v * v) * &w_arr).sum();
+
+        let slope = numerator / denominator;
+        let intercept = y_mean - slope * x_mean;
+
+        // 残差、加权标准误计算
+        let residuals = &y_arr - &(intercept + &(slope * &x_arr));
+        let sigma2 = (&w_arr * &(&residuals * &residuals)).sum() / (w_sum - 2.0);
+        let se_slope = (sigma2 / denominator).sqrt();
+        let se_intercept = (sigma2 * (1.0 / w_sum + x_mean.powi(2) / denominator)).sqrt();
+
+        // 估算 h²
+        let h2 = slope * m / mean_neff;
+
+        println!(
+            "Weighted h2 {:.4}, slope {:.4}, intercept {:.4}, SNPs {}, mean effective sample size {}, se_slope {:.4}, se_intercept {:.4}",
+            h2, slope, intercept, m, mean_neff, se_slope, se_intercept
+        );
+
         Ok(h2)
     }
 
@@ -601,7 +626,7 @@ pub fn compute_genetic_correlation(
     // let slope = numerator / denominator;
 
     // theoretical formula to convert slope to genetic correlation
-    let x_arr: Array1<f64> = Array1::from(l2_vec);
+    /*let x_arr: Array1<f64> = Array1::from(l2_vec);
     let y_arr: Array1<f64> = Array1::from(z1z2_vec);
     let (intercept, slope, _se_intercept, _se_slope) = linear_regression(&x_arr, &y_arr);
     let genetic_correlation = slope * m / ((n1 * n2).sqrt() * h1_h2);
@@ -609,7 +634,35 @@ pub fn compute_genetic_correlation(
     println!(
         "M = {:.0}, N1 = {:.0}, N2 = {:.0}, h1² = {:.4}, h2² = {:.4}, slope = {:.6}, r_g = {:.6},intercept = {:.4}",
         m, n1, n2, h1_2, h2_2, slope, genetic_correlation, intercept
-    );
+    );*/
+    // 计算权重
+    let weights: Vec<f64> = l2_vec.iter().map(|l| 1.0 / (l + 1.0).powi(2)).collect();
 
-    Ok(genetic_correlation)
+    // 加权平均
+    let w_sum: f64 = weights.iter().sum();
+    let x_mean = l2_vec.iter().zip(weights.iter()).map(|(x, w)| x * w).sum::<f64>() / w_sum;
+    let y_mean = z1z2_vec.iter().zip(weights.iter()).map(|(y, w)| y * w).sum::<f64>() / w_sum;
+
+    // 加权协方差与方差
+    let cov_xy = l2_vec.iter()
+        .zip(z1z2_vec.iter())
+        .zip(weights.iter())
+        .map(|((x, y), w)| w * (x - x_mean) * (y - y_mean))
+        .sum::<f64>();
+
+    let var_x = l2_vec.iter()
+        .zip(weights.iter())
+        .map(|(x, w)| w * (x - x_mean).powi(2))
+        .sum::<f64>();
+
+    let slope = cov_xy / var_x;
+    let intercept = y_mean - slope * x_mean;
+
+    // 计算遗传相关
+    let rg = slope * m / ((n1 * n2).sqrt() * h1_h2);
+    println!(
+        "M = {:.0}, N1 = {:.0}, N2 = {:.0}, h1² = {:.4}, h2² = {:.4}, slope = {:.6}, r_g = {:.6},intercept = {:.4}",
+        m, n1, n2, h1_2, h2_2, slope, rg, intercept
+    );
+    Ok(rg)
 }
