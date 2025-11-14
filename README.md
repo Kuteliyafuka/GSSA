@@ -1,5 +1,6 @@
 # troduction
 
+the software gssa is in gssa_linux_x86_64.tar.gz.
 
 This project aims to develop a flexible tool to perform genetic analyses using GWAS summary statistics.  
 
